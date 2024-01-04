@@ -22,7 +22,6 @@ class ModelArgs:
     
     device: Optional[str] = None
     
-    
 def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta_scalar: float = 10000.0):
     '''
     Rotary Position Embedding (RoFormer) 
@@ -49,7 +48,6 @@ def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta_
     freqs_complex = torch.polar(torch.ones_like(freqs), freqs) # (seq_len, head_dim / 2) -> (seq_len, head_dim / 2)
     
     return freqs_complex
-
 
 def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device):
     '''
@@ -220,7 +218,6 @@ class FeedForward(nn.Module):
         x = self.w2(x)
         return x
             
-    
 class EncoderBlock(nn.Module):
     
     '''
@@ -252,10 +249,6 @@ class EncoderBlock(nn.Module):
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
         
-        
-        
-        
- 
 class Transformers(nn.Module):
     '''
     Llama architecture.

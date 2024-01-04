@@ -27,7 +27,7 @@ class LLaMA:
             assert len(checkpoints) > 0, f"No checkpoint files found in {checkpoints_dir}"
             ckpt_path = checkpoints[0]
             print(f'Loading checkpoints {ckpt_path}')
-            checkpoint = torch.load(ckpt_path, map_location="cpu")  # Corrected map_location
+            checkpoint = torch.load(ckpt_path, map_location="cuda")  # Corrected map_location
             print(f'Loaded checkpoints in {time.time() - prev_time:.2f}s')  # Corrected format
             prev_time = time.time()
             
@@ -83,7 +83,8 @@ class LLaMA:
         for k, t in enumerate(prompt_tokens):
             tokens[k, :len(t)] = torch.tensor(t, dtype=torch.long, device=device) # Remplace par des prompt_tokens
             
-        eos_reached = torch.Tensor([False] * batch_size, device=device)
+        eos_reached = torch.tensor([False] * batch_size, device=device)
+        
         prompt_tokens_mask = tokens != pad_id # True, si le token est du prompt sinon False
         
         # For loop pour créer les tokens
@@ -123,20 +124,20 @@ class LLaMA:
         return(out_tokens, out_text)
         
         
-def _sample_top_p(self, probs, p):
-    '''
-    Classe et arrange les tokens par top 'probabilités'
-    '''
-    probs_sort, probs_idx = torch.sort(probs, dim = -1, descending= True)
-    probs_sum = torch.cumsum(probs_sort, dim= -1)
-    mask = probs_sum - probs_sort > p
-    probs_sort[mask] = 0.0
-    
-    # Redistribution des probabilités
-    probs_sort.div_(probs_sort.sum(div=-1, keepdim=True))
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    next_token = torch.gather(probs_idx, -1, next_token) # Parce qu'on les a classés, il faut les rapprocher avec l'index.
-    return next_token
+    def _sample_top_p(self, probs, p):
+        '''
+        Classe et arrange les tokens par top 'probabilités'
+        '''
+        probs_sort, probs_idx = torch.sort(probs, dim = -1, descending= True)
+        probs_sum = torch.cumsum(probs_sort, dim= -1)
+        mask = probs_sum - probs_sort > p
+        probs_sort[mask] = 0.0
+        
+        # Redistribution des probabilités
+        probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+        next_token = torch.multinomial(probs_sort, num_samples=1)
+        next_token = torch.gather(probs_idx, -1, next_token) # Parce qu'on les a classés, il faut les rapprocher avec l'index.
+        return next_token
 
 
     
