@@ -3,3 +3,5 @@
 nonsens.py
 infernonsens.py
 tokenizer.model
+/.vscode
+/__pycache__
