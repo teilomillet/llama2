@@ -140,8 +140,10 @@ class SelfAttention(nn.Module):
         self.cache_k = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
         self.cache_v = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
         
+        
     def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):
-        batch_size, seq_len, _ = x.shape # (B, 1, dim)
+        batch_size, seq_len, _ = x.shape 
+        # (B, 1, dim) = (B = Batch, seq_len = 1, dim)
         
         # Application des poids (Wq, Wk, Wv) aux queries (q), keys (k) et values (v)
         
@@ -172,7 +174,7 @@ class SelfAttention(nn.Module):
         keys = self.cache_k[:batch_size, 0:start_pos+seq_len]
         values = self.cache_v[:batch_size, 0:start_pos+seq_len]
         
-        # Duplique K et V heads afin d'avoir le même nombre de tête que Q
+        # Duplique K et V heads afin d'avoir le même nombre de tête que Q (as done by Meta)
         keys = repeat_kv(keys, self.n_rep)        
         values = repeat_kv(values, self.n_rep)
         
@@ -192,6 +194,32 @@ class SelfAttention(nn.Module):
         output = (output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1))
         return self.wo(output) # (B, 1, dim)
         
+class FeedForward(nn.Module):
+    
+    def __init__(self, args: ModelArgs):
+        super().__init__()
+        
+        hidden_dim = 4 * args.dim
+        hidden_dim = int(2 * hidden_dim / 3)
+        
+        if args.ffn_dim_multiplier is not None:
+            hidden_dim = int(args.ffn_dim_multiplier * hidden_dim)
+        
+        # Arondi au plus proche multiple du parametres de mulitples
+        hidden_dim = args.multiple_of * ((hidden_dim * args.multiple_of -1 ) // args.multiple_of)
+        
+        # Ws for SwiGLU activation function
+        self.w1 = nn.Linear(args.dim, hidden_dim, bias=False)
+        self.w2 = nn.Linear(hidden_dim, args.dim, bias=False)
+        self.w3 = nn.Linear(args.dim, hidden_dim, bias=False)
+        
+    def forward(self, x: torch.Tensor):
+        swish = F.silu(self.w1(x))
+        x_V = self.w3(x)
+        x = swish * x_V
+        x = self.w2(x)
+        return x
+            
     
 class EncoderBlock(nn.Module):
     
