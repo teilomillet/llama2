@@ -27,7 +27,7 @@ class LLaMA:
             assert len(checkpoints) > 0, f"No checkpoint files found in {checkpoints_dir}"
             ckpt_path = checkpoints[0]
             print(f'Loading checkpoints {ckpt_path}')
-            checkpoint = torch.load(ckpt_path, map_location="cuda")  # Corrected map_location
+            checkpoint = torch.load(ckpt_path, map_location=device)  # Corrected map_location
             print(f'Loaded checkpoints in {time.time() - prev_time:.2f}s')  # Corrected format
             prev_time = time.time()
             
@@ -47,9 +47,11 @@ class LLaMA:
         model_args.vocab_size = tokenizer.vocab_size()
         
         if device == "cuda":
-            torch.set_default_tensor_type(torch.cuda.HalfStorage)  # Adjusted tensor type
+            torch.set_default_dtype(torch.float16)  # or torch.float32, based on your requirement
+            torch.cuda.set_device(0)  # Sets the default CUDA device (0 is usually the first GPU)
         else:
-            torch.set_default_tensor_type(torch.BFloat16Tensor)  # Adjusted tensor type
+            torch.set_default_dtype(torch.float32)  # CPU typically uses float32
+
             
         model = Transformers(model_args).to(device)
         
