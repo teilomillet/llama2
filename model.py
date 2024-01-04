@@ -10,7 +10,7 @@ class ModelArgs:
     dim: int = 4096 # dimension de l'embeddings // dépend de la taille du model. (ici base model)
     n_layers: int = 32
     n_heads: int = 32 # Nombre de tête pour les requêtes/queries (q)
-    n_kv_hedas: Optional[int] = None # Nombre de tête pour les clefs/keys (k) et les valeurs/values (v)
+    n_kv_heads: Optional[int] = None # Nombre de tête pour les clefs/keys (k) et les valeurs/values (v)
     vocab_size: int = -1 # Change avec le tokenizer
     multiple_of: int = 256
     ffn_dim_multiplier: Optional[float] = None
@@ -76,6 +76,22 @@ def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device
     
     return x_out.type_as(x).to(device)
 
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    '''
+    Duplique les têtes KV.
+    '''
+    batch_size, seq_len, n_kv_heads, head_dim = x.shape
+    
+    if n_rep == 1:
+        return x
+    else:
+        # (B, seq_len, N_KV_head, 1, head_dim)
+        return (
+            x[:, :, None, :]
+            .expand(batch_size, seq_len, n_kv_heads, n_rep, head_dim)
+            .reshape(batch_size, seq_len, n_kv_heads * n_rep, head_dim)
+        )
+
 class RMSNorm(nn.Module):
     
     '''
@@ -101,10 +117,90 @@ class RMSNorm(nn.Module):
         # (dim) * (B, seq_len, dim) * (B, seq_len, dim)
         return self.weight * self._norm(x.float()).type_as(x)
     
+class SelfAttention(nn.Module):
+    
+    '''
+    J'ai qu'un seul GPU donc pas besoin de parallelisme. Ce qui simplifie le code.
+    '''
+    
+    def __init__(self, args: ModelArgs):
+        super().__init__()
+        
+        self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads # Nombre de tête pour (kv)
+        self.n_heads_q = args.n_heads # Nombre de tête pour (q)
+        self.n_rep = self.n_heads_q // self.n_kv_heads # Ratio nombre de tête (q) et nombre de tête (kv), pour dupliquer KV -> Q.
+        self.head_dim = args.dim // args.n_heads # Indique la dimension de chaque tête
+        
+        self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
+        
+        # Caching K & V
+        self.cache_k = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
+        self.cache_v = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
+        
+    def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):
+        batch_size, seq_len, _ = x.shape # (B, 1, dim)
+        
+        # Application des poids (Wq, Wk, Wv) aux queries (q), keys (k) et values (v)
+        
+        # (B, 1 dim) -> (B, 1, H_Q * head_dim)
+        xq = self.wq(x)
+        # (B, 1, dim) -> (B, 1, H_KV * head_dim)
+        xk = self.wk(x)
+        xv = self.wv(x)
+        
+        # (B, 1, H_Q * head_dim) -> (B, 1, H_Q, head_dim)
+        # Division en H heads.
+        xq = xq.view(batch_size, seq_len, self.n_heads_q, self.head_dim)
+        
+        # (B, 1, H_KV * head_dim) -> (B, 1, H_KV, head_dim)
+        xk = xk.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
+        xv = xv.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
+        
+        # Application du RoFORMER (Rotary Position Embeddings)
+        xq = apply_rotary_embeddings(xq, freqs_complex, device=x.device)
+        xk = apply_rotary_embeddings(xk, freqs_complex, device=x.device)
+        
+        # Remplace le cache du token
+        self.cache_k[:batch_size, start_pos:start_pos+seq_len] = xk
+        self.cache_v[:batch_size, start_pos:start_pos+seq_len] = xv
+        
+        # Extrait les keys et values qui sont dans le cache
+        # (B, seq_len_KV, head_dim)
+        keys = self.cache_k[:batch_size, 0:start_pos+seq_len]
+        values = self.cache_v[:batch_size, 0:start_pos+seq_len]
+        
+        # Duplique K et V heads afin d'avoir le même nombre de tête que Q
+        keys = repeat_kv(keys, self.n_rep)        
+        values = repeat_kv(values, self.n_rep)
+        
+        # (B, 1, H_Q, head_dim) -> (B, H_Q, 1, head_dim)
+        xq = xq.transpose(1, 2)
+        keys = keys.transpose(1, 2)
+        values = values.transpose(1, 2)
+        
+        # (B, H_Q, 1, head_dim) @ (B, H_Q, head_dim, seq_len_KV) -> (B, H_Q, 1, seq_len_KV)
+        scores = torch.matmul(xq, keys.transpose(2,3)) / math.sqrt(self.head_dim)
+        scores = F.softmax(scores.float(), dim=1).type_as(xq)
+        
+        # (B, H_Q, 1, seq_len) @ (B, H_Q, seq_len, head_dim) -> (B, H_Q, 1, head_dim)
+        output = torch.matmul(scores, values)
+        
+        # (B, H_Q, 1, head_dim) -> (B, 1, H_Q, head_dim) -> (B, 1, dim)
+        output = (output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1))
+        return self.wo(output) # (B, 1, dim)
+        
     
 class EncoderBlock(nn.Module):
     
-    def __init__(self, args: ModelArgs) -> None:
+    '''
+    Corps du transformer. 
+    
+    '''
+    
+    def __init__(self, args: ModelArgs):
         super().__init__()
         
         self.n_heads = args.n_heads
