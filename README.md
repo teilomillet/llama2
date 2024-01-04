@@ -1,7 +1,5 @@
 # llama2
 
-to watch and apply : https://www.youtube.com/watch?v=bmpjT0T4IDY
-
 ## Access to the file
 To access this file and play with it, you need to have git and conda install. 
 
@@ -23,12 +21,12 @@ After downloading the repository you will need to go inside it
 You need `conda` installed. [miniconda here](https://docs.conda.io/projects/miniconda/en/latest/miniconda-install.html)
 
 
-### Create the conda environment
+#### Create the conda environment
 Create and activate conda environment:
 
 ```bash
 conda env create -f environment.yaml
-conda activate mojo-llama
+conda activate llama2
 ```
 
 ### Auto set mojo environment
@@ -48,6 +46,8 @@ echo "unset MOJO_PYTHON_LIBRARY" > $CONDA_PREFIX/etc/conda/deactivate.d/unset-mo
 Activate the environment and run the program:
 
 ```bash
-conda activate mojo-llama
-mojo main.mojo
+conda activate llama2
+python3 model.py 
+# OR
+mojo model.mojo
 ```

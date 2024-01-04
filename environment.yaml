@@ -1,4 +1,4 @@
-name: mojo-llama
+name: llama2
 channels:
   - defaults
 dependencies:
