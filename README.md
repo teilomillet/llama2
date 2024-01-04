@@ -1,7 +1,6 @@
-# LLaMA 2
+# Llama 2
 
-Ce projet vise à reconstruire l'architecture de LLaMA2. J'ai implémenté les fonctionnalités suivantes :
-
+Ce projet vise à reconstruire l'architecture de llama 2. J'ai implémenté les fonctionnalités suivantes :
 
 - GQA (Grouped-Query Attention) [Lien vers le papier](https://arxiv.org/pdf/2305.13245.pdf)
 - RoFormer (Rotary Position Embedding) [Lien vers le papier](https://arxiv.org/pdf/2104.09864.pdf)
@@ -11,6 +10,8 @@ Ce projet vise à reconstruire l'architecture de LLaMA2. J'ai implémenté les f
 - Top P [Lien vers le papier](https://arxiv.org/pdf/1904.09751.pdf)
 
 Pour reproduire ou essayer ce projet, il est nécessaire de télécharger les checkpoints du modèle fournis par Meta. Dans notre cas, téléchargez le modèle 'llama-2-7b' depuis en suivant la démarche de [ce lien](https://github.com/facebookresearch/llama). 
+
+L'objectif est de servir de point de départ pour des tests ou approfondir l'apprentissage et la compréhension de l'architecture des LLMs.
 
 ## Accès et Modification du Fichier
 Pour accéder, télécharger et modifier ce fichier, vous devez avoir installé Git et Conda.
