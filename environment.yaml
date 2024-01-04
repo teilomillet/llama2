@@ -1,0 +1,7 @@
+name: mojo-llama
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pytorch
+
