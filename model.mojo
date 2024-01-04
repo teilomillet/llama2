@@ -32,5 +32,4 @@ struct Transformers:
 
     fn __init__(inout self, args: ModelArgs):
         self.args = args
-        self.vocab_size = args.vocab_size
 

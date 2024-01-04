@@ -23,7 +23,7 @@ class ModelArgs:
     device: Optional[str] = None
     
     
-def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta_scalar: float = 10000.0):
+def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device: str, theta_scalar: float = 10000.0):
     '''
     Rotary Position Embedding (RoFormer) 
     
@@ -51,7 +51,7 @@ def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta_
     return freqs_complex
 
 
-def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device):
+def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device: str):
     '''
    
     Splitting les vecteurs embeddings en de nouveau tensors, de facon à ce qu'ils aient la moitiés de la dimension. 
@@ -139,8 +139,8 @@ class SelfAttention(nn.Module):
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
         
         # Caching K & V
-        self.register_buffer("cache_k", torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)))
-        self.register_buffer("cache_v", torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)))
+        self.cache_k = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
+        self.cache_v = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
         
         
     def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):
@@ -152,7 +152,8 @@ class SelfAttention(nn.Module):
         # (B, 1 dim) -> (B, 1, H_Q * head_dim)
         xq = self.wq(x)
         # (B, 1, dim) -> (B, 1, H_KV * head_dim)
-        xk, xv = self.wk(x), self.wv(x)
+        xk = self.wk(x)
+        xv = self.wv(x)
         
         # (B, 1, H_Q * head_dim) -> (B, 1, H_Q, head_dim)
         # Division en H heads.
@@ -163,7 +164,8 @@ class SelfAttention(nn.Module):
         xv = xv.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
         
         # Application du RoFORMER (Rotary Position Embeddings)
-        xq, xk = apply_rotary_embeddings(xq, freqs_complex, x.device), apply_rotary_embeddings(xk, freqs_complex, x.device)
+        xq = apply_rotary_embeddings(xq, freqs_complex, device=x.device)
+        xk = apply_rotary_embeddings(xk, freqs_complex, device=x.device)
         
         # Remplace le cache du token
         self.cache_k[:batch_size, start_pos:start_pos+seq_len] = xk
