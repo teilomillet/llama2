@@ -20,9 +20,9 @@ class ModelArgs:
     max_batch_size: int = 32
     max_seq_len: int = 2048
     
-    device: Optional[str] = None
+    device: str = None
     
-def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta_scalar: float = 10000.0):
+def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta: float = 10000.0):
     '''
     Rotary Position Embedding (RoFormer) 
     
@@ -36,8 +36,8 @@ def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device, theta_
     
     # Build the theta parameters (sequence) 
     # theta_i = theta_scalar ^ (-2(i-1)/dim) for i = [1,2, ... dim/2]
-    theta_numerator = torch.arange(0, head_dim, 2).float().to(device)
-    theta = 1.0 / (theta_scalar ** (theta_numerator / head_dim)) # (head_dim / 2)
+    theta_numerator = torch.arange(0, head_dim, 2).float()
+    theta = 1.0 / (theta ** (theta_numerator / head_dim)).to(device) # (head_dim / 2)
     
     m = torch.arange(seq_len, device=device)
     
@@ -60,7 +60,7 @@ def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device
     
     # Prend 2 dimensions consécutives et groupe les ensemble, puis transforme la un tensor complexe (view_as_complex).
     # (B, seq_len, h, head_dim) -> (B, seq_len, h, head_dim / 2)
-    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:1], -1, 2))
+    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
     
     # (seq_len, head_dim /2 ) -> (1, seq_len, 1, head_dim/2)
     freqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)
@@ -84,10 +84,10 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     
     if n_rep == 1:
         return x
-    else:
-        # (B, seq_len, N_KV_head, 1, head_dim)
-        return (
-            x[:, :, None, :]
+    
+    # (B, seq_len, N_KV_head, 1, head_dim)
+    return (
+            x[:, :, :, None, :]
             .expand(batch_size, seq_len, n_kv_heads, n_rep, head_dim)
             .reshape(batch_size, seq_len, n_kv_heads * n_rep, head_dim)
         )
@@ -137,8 +137,8 @@ class SelfAttention(nn.Module):
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
         
         # Caching K & V
-        self.register_buffer("cache_k", torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)))
-        self.register_buffer("cache_v", torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)))
+        self.cache_k = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
+        self.cache_v = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
         
         
     def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):
@@ -161,7 +161,8 @@ class SelfAttention(nn.Module):
         xv = xv.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
         
         # Application du RoFORMER (Rotary Position Embeddings)
-        xq, xk = apply_rotary_embeddings(xq, freqs_complex, x.device), apply_rotary_embeddings(xk, freqs_complex, x.device)
+        xq = apply_rotary_embeddings(xq, freqs_complex, device=x.device)
+        xk = apply_rotary_embeddings(xk, freqs_complex, device=x.device)
         
         # Remplace le cache du token
         self.cache_k[:batch_size, start_pos:start_pos+seq_len] = xk
@@ -169,8 +170,8 @@ class SelfAttention(nn.Module):
         
         # Extrait les keys et values qui sont dans le cache
         # (B, seq_len_KV, head_dim)
-        keys = self.cache_k[:batch_size, 0:start_pos+seq_len]
-        values = self.cache_v[:batch_size, 0:start_pos+seq_len]
+        keys = self.cache_k[:batch_size, : start_pos+seq_len]
+        values = self.cache_v[:batch_size, : start_pos+seq_len]
         
         # Duplique K et V heads afin d'avoir le même nombre de tête que Q (as done by Meta)
         keys = repeat_kv(keys, self.n_rep)        
@@ -183,7 +184,7 @@ class SelfAttention(nn.Module):
         
         # (B, H_Q, 1, head_dim) @ (B, H_Q, head_dim, seq_len_KV) -> (B, H_Q, 1, seq_len_KV)
         scores = torch.matmul(xq, keys.transpose(2,3)) / math.sqrt(self.head_dim)
-        scores = F.softmax(scores.float(), dim=1).type_as(xq)
+        scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         
         # (B, H_Q, 1, seq_len) @ (B, H_Q, seq_len, head_dim) -> (B, H_Q, 1, head_dim)
         output = torch.matmul(scores, values)
@@ -249,7 +250,7 @@ class EncoderBlock(nn.Module):
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
         
-class Transformers(nn.Module):
+class Transformer(nn.Module):
     '''
     Llama architecture.
     Les noms sont quasiment les mêmes que ceux de llama.
@@ -269,7 +270,7 @@ class Transformers(nn.Module):
         
         # Le passe dans une liste de layers
         self.layers = nn.ModuleList()
-        for _ in range(args.n_layers):
+        for layer_id in range(args.n_layers):
             self.layers.append(EncoderBlock(args))
         
         # L'output du dernier layer est normalisé (RMSNorm) avant d'etre 'output'
@@ -298,7 +299,7 @@ class Transformers(nn.Module):
         
         # Rotary Position Embeddings implementation
         # Retrouver le paire (m, theta) correspondant à la position de l'embeddings [start_pos, start_pos + seq_len]
-        freqs_complex = self.freqs_complex[start_pos: start_pos + seq_len]
+        freqs_complex = self.freqs_complex[start_pos:start_pos + seq_len]
         
         # Applique aux prochains layers de l'encodeur
         for layer in self.layers:

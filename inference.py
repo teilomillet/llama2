@@ -11,10 +11,10 @@ import time
 import json
 
 
-from model import ModelArgs, Transformers
+from model import ModelArgs, Transformer
 
 class LLaMA:
-    def __init__(self, model: Transformers, tokenizer: SentencePieceProcessor, model_args: ModelArgs):
+    def __init__(self, model: Transformer, tokenizer: SentencePieceProcessor, model_args: ModelArgs):
         self.model = model
         self.tokenizer = tokenizer  # Corrected
         self.args = model_args
@@ -27,7 +27,7 @@ class LLaMA:
             assert len(checkpoints) > 0, f"No checkpoint files found in {checkpoints_dir}"
             ckpt_path = checkpoints[0]
             print(f'Loading checkpoints {ckpt_path}')
-            checkpoint = torch.load(ckpt_path, map_location=device)  # Corrected map_location
+            checkpoint = torch.load(ckpt_path, map_location='cpu')  # Corrected map_location
             print(f'Loaded checkpoints in {time.time() - prev_time:.2f}s')  # Corrected format
             prev_time = time.time()
             
@@ -47,13 +47,11 @@ class LLaMA:
         model_args.vocab_size = tokenizer.vocab_size()
         
         if device == "cuda":
-            torch.set_default_dtype(torch.float16)  # or torch.float32, based on your requirement
-            torch.cuda.set_device(0)  # Sets the default CUDA device (0 is usually the first GPU)
+            torch.set_default_tensor_type(torch.cuda.HalfTensor)
         else:
-            torch.set_default_dtype(torch.float32)  # CPU typically uses float32
+            torch.set_default_tensor_type(torch.BFloat16Tensor)
 
-            
-        model = Transformers(model_args).to(device)
+        model = Transformer(model_args).to(device)    
         
         if load_model:
             del checkpoint["rope.freqs"]
@@ -146,7 +144,7 @@ class LLaMA:
 if __name__ == '__main__':
     torch.manual_seed(0)
     
-    allow_cuda = True
+    allow_cuda = False
     device = 'cuda' if torch.cuda.is_available() and allow_cuda else 'cpu'
     
     prompts = [
